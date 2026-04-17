@@ -1,0 +1,56 @@
+[
+  {
+    "path_text": "附录E 混凝土及钢筋混凝土工程",
+    "text": "表E.2.1现浇混凝土构件(编码：010502)",
+    "tables": [
+      {
+        "table_index": 1,
+        "title": "表E.2.1现浇混凝土构件(编码：010502)",
+        "raw_text": "010502009 地下室外墙 1.混凝土种类 2.混凝土强度等级 3.墙厚>200mm 按设计图示尺寸以体积计算 010502010 钢筋混凝土墙 内、外墙高度均算至板顶 010502011 混凝土梁 1.混凝土种类 2.混凝土强度等级 3.坡度 按设计图示尺寸以体积计算 010505005 墙面模板 1.模板形式 按模板与现浇混凝土构件的接触面积计算",
+        "rows": [
+          {
+            "row_index": 1,
+            "project_code": "010502009",
+            "project_name": "地下室外墙",
+            "project_features": "1.混凝土种类\n2.混凝土强度等级\n3.墙厚>200mm",
+            "measurement_unit": "m3",
+            "quantity_rule": "按设计图示尺寸以体积计算\n墙高：墙基上表面至墙顶之间的高度，与板相交时，",
+            "work_content": "1.孔洞预留"
+          },
+          {
+            "row_index": 2,
+            "project_code": "010502010",
+            "project_name": "钢筋混凝土墙",
+            "project_features": "",
+            "measurement_unit": "m3",
+            "quantity_rule": "内、外墙高度均算至板顶",
+            "work_content": "1.孔洞预留"
+          },
+          {
+            "row_index": 3,
+            "project_code": "010502011",
+            "project_name": "混凝土梁",
+            "project_features": "1.混凝土种类\n2.混凝土强度等级\n3.坡度",
+            "measurement_unit": "m3",
+            "quantity_rule": "按设计图示尺寸以体积计算",
+            "work_content": "1.混凝土输送"
+          },
+          {
+            "row_index": 4,
+            "project_code": "010505005",
+            "project_name": "墙面模板",
+            "project_features": "1.模板形式",
+            "measurement_unit": "m2",
+            "quantity_rule": "按模板与现浇混凝土构件的接触面积计算",
+            "work_content": "1.模板制作"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "path_text": "附录E 混凝土及钢筋混凝土工程 > E.4 其他规定",
+    "non_table_text": "E.4.1 地下室外墙、钢筋混凝土墙应按“钢筋混凝土墙”相关项目编码列项。\nE.4.2 墙项目工程量按体积计算。\nE.4.3 钢筋混凝土墙的“墙厚”可描述为200mm、250mm。\nE.4.4 项目特征中的“混凝土种类”“混凝土强度等级”应结合设计要求描述。",
+    "tables": []
+  }
+]

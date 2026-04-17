@@ -1,0 +1,1122 @@
+"""
+Step5 项目特征审核导出工具
+
+读取 Step3 匹配结果，提取未匹配的项目特征(feature_expression_items where matched=false)，
+按 source_component|label 聚合去重，生成可交互式审核/标记/导出的单页 HTML 工具。
+
+功能概览：
+- 仪表盘：总缺口数 / 待补充 / 无需补充 / 待确认 + 进度条
+- 左侧：构件类型列表（按缺口数降序）
+- 主区：筛选栏 + 虚拟滚动缺口列表
+- 每条支持：状态标记 / 批注 / 查看来源行
+- 批量操作：全选/反选、批量设状态
+- 导出：Excel(多sheet) + JSON + 进度保存/恢复
+- 持久化：localStorage 自动保存审核状态
+"""
+
+from __future__ import annotations
+
+import argparse
+import html as html_mod
+import json
+from collections import Counter, defaultdict
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+# ──────────────────────────── Defaults ────────────────────────────
+DEFAULT_STEP3_RESULT = "data/output/step3/run-20260416-full/project_component_feature_calc_matching_result.json"
+DEFAULT_COMPONENTS = "data/input/components.json"
+DEFAULT_OUTPUT_DIR = "data/output/step5"
+OUTPUT_HTML_NAME = "feature_audit_tool.html"
+
+
+def _esc(v: Any) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, (dict, list)):
+        v = json.dumps(v, ensure_ascii=False)
+    return html_mod.escape(str(v))
+
+
+# ──────────────────────── T001: CLI + Loading ─────────────────────
+def load_step3_results(path: Path) -> dict:
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    rows = data.get("rows", [])
+    meta = data.get("meta", {})
+    print(f"  Step3 结果: {len(rows)} 行")
+    return {"rows": rows, "meta": meta}
+
+
+def load_components_library(path: Path) -> list[dict]:
+    with open(path, "r", encoding="utf-8") as f:
+        comps = json.load(f)
+    print(f"  构件库: {len(comps)} 种构件类型")
+    return comps
+
+
+# ──────────────────── T002: Extract & Aggregate ───────────────────
+def extract_gap_items(rows: list[dict]) -> list[dict]:
+    """遍历所有行的 feature_expression_items，提取 matched=false 条目。"""
+    items = []
+    for r in rows:
+        comp = r.get("source_component_name", "") or r.get("resolved_component_name", "") or "未知构件"
+        row_id = r.get("row_id", r.get("result_id", ""))
+        project_code = r.get("project_code", "")
+        project_name = r.get("project_name", "")
+        for fei in r.get("feature_expression_items", []):
+            if not fei.get("matched", False):
+                items.append({
+                    "source_component": comp,
+                    "label": fei.get("label", fei.get("raw_text", "")),
+                    "raw_text": fei.get("raw_text", ""),
+                    "attribute_name": fei.get("attribute_name", ""),
+                    "attribute_code": fei.get("attribute_code", ""),
+                    "value_expression": fei.get("value_expression", ""),
+                    "expression": fei.get("expression", ""),
+                    "row_id": row_id,
+                    "project_code": project_code,
+                    "project_name": project_name,
+                })
+    print(f"  原始未匹配条目: {len(items)}")
+    return items
+
+
+def aggregate_by_component(items: list[dict]) -> list[dict]:
+    """按 source_component|label 合并，计算出现次数，收集值样本和来源行。"""
+    groups: dict[str, dict] = {}
+    for it in items:
+        key = f"{it['source_component']}|{it['label']}"
+        if key not in groups:
+            groups[key] = {
+                "item_key": key,
+                "source_component": it["source_component"],
+                "label": it["label"],
+                "raw_text": it["raw_text"],
+                "attribute_name": it["attribute_name"],
+                "attribute_code": it["attribute_code"],
+                "occurrence_count": 0,
+                "value_samples": [],
+                "source_rows": [],
+            }
+        g = groups[key]
+        g["occurrence_count"] += 1
+        ve = it.get("value_expression", "")
+        if ve and ve not in g["value_samples"] and len(g["value_samples"]) < 3:
+            g["value_samples"].append(ve)
+        g["source_rows"].append({
+            "row_id": it["row_id"],
+            "project_code": it["project_code"],
+            "project_name": it["project_name"],
+            "expression": it.get("expression", ""),
+        })
+
+    result = sorted(groups.values(), key=lambda x: (-x["occurrence_count"], x["source_component"], x["label"]))
+    print(f"  聚合后缺口条目: {len(result)} (去重率 {100 - len(result) / max(len(items), 1) * 100:.0f}%)")
+    return result
+
+
+def build_stats(gap_items: list[dict], rows: list[dict]) -> dict:
+    total_fei = sum(len(r.get("feature_expression_items", [])) for r in rows)
+    total_matched = sum(
+        1 for r in rows for f in r.get("feature_expression_items", []) if f.get("matched")
+    )
+    total_unmatched = total_fei - total_matched
+
+    # By component
+    by_comp: dict[str, int] = Counter()
+    for g in gap_items:
+        by_comp[g["source_component"]] += 1
+    comp_ranking = sorted(by_comp.items(), key=lambda x: -x[1])
+
+    # Top labels
+    label_counts = Counter(g["label"] for g in gap_items)
+    top_labels = label_counts.most_common(30)
+
+    return {
+        "total_fei": total_fei,
+        "total_matched": total_matched,
+        "total_unmatched": total_unmatched,
+        "total_gap_items": len(gap_items),
+        "total_components": len(by_comp),
+        "comp_ranking": comp_ranking,
+        "top_labels": top_labels,
+    }
+
+
+# ──────────────────── Build Component Reference ──────────────────
+def build_comp_ref(components: list[dict]) -> dict:
+    """将 components.json 转为前端可用的引用字典 {component_type: {attributes, calculations}}。"""
+    ref = {}
+    for c in components:
+        ct = c.get("component_type", "")
+        props = c.get("properties", {})
+        ref[ct] = {
+            "attributes": [
+                {"name": a.get("name", ""), "code": a.get("code", ""), "data_type": a.get("data_type", ""), "values": a.get("values", [])}
+                for a in props.get("attributes", [])
+            ],
+            "calculations": [
+                {"name": ca.get("name", ""), "code": ca.get("code", ""), "unit": ca.get("unit", "")}
+                for ca in props.get("calculations", [])
+            ],
+        }
+    return ref
+
+
+# ──────────────────────── T003-T010: HTML ─────────────────────────
+def build_audit_html(gap_items: list[dict], comp_ref: dict, stats: dict, meta: dict) -> str:
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+    std_doc = _esc(meta.get("standard_document", ""))
+
+    # Escape </script> in JSON to prevent script tag breakout (security)
+    gap_json = json.dumps(gap_items, ensure_ascii=False).replace("</", "<\\/")
+    comp_ref_json = json.dumps(comp_ref, ensure_ascii=False).replace("</", "<\\/")
+    stats_json = json.dumps(stats, ensure_ascii=False).replace("</", "<\\/")
+
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Step5 项目特征审核导出工具</title>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<style>
+/* ═══════════ T004: CSS 基础样式 + 三栏布局 ═══════════ */
+:root {{
+  color-scheme: light;
+  --bg: #f8fafc;
+  --card: #ffffff;
+  --card2: #f1f5f9;
+  --border: #e2e8f0;
+  --text: #1e293b;
+  --muted: #64748b;
+  --blue: #3b82f6;
+  --blue-light: #eff6ff;
+  --green: #16a34a;
+  --green-light: #f0fdf4;
+  --orange: #d97706;
+  --orange-light: #fffbeb;
+  --red: #dc2626;
+  --red-light: #fef2f2;
+  --purple: #7c3aed;
+  --purple-light: #f5f3ff;
+  --radius: 10px;
+  --shadow: 0 1px 3px rgba(0,0,0,.08);
+}}
+* {{ box-sizing: border-box; margin: 0; padding: 0; }}
+body {{
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+}}
+.wrap {{ max-width: 1800px; margin: 0 auto; padding: 12px 20px; }}
+h1 {{ font-size: 20px; font-weight: 700; }}
+.muted {{ color: var(--muted); font-size: 13px; }}
+
+/* ─── Dashboard ─── */
+.dashboard {{
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin: 14px 0;
+}}
+.stat-card {{
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: all .15s;
+  box-shadow: var(--shadow);
+}}
+.stat-card:hover {{ border-color: var(--blue); transform: translateY(-1px); }}
+.stat-card.active {{ border-color: var(--blue); background: var(--blue-light); }}
+.stat-card .label {{ font-size: 12px; color: var(--muted); margin-bottom: 4px; }}
+.stat-card .value {{ font-size: 26px; font-weight: 700; }}
+.stat-card .sub {{ font-size: 11px; color: var(--muted); margin-top: 2px; }}
+.stat-card.card-total .value {{ color: var(--text); }}
+.stat-card.card-pending .value {{ color: var(--orange); }}
+.stat-card.card-no-need .value {{ color: var(--green); }}
+.stat-card.card-confirm .value {{ color: var(--blue); }}
+.stat-card.card-to-fill .value {{ color: var(--red); }}
+.progress-bar {{ height: 6px; background: var(--card2); border-radius: 3px; margin: 8px 0 2px; overflow: hidden; }}
+.progress-fill {{ height: 100%; background: linear-gradient(90deg, var(--green), var(--blue)); border-radius: 3px; transition: width .3s; }}
+
+/* ─── Main Grid ─── */
+.main-grid {{
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 12px;
+  margin-top: 8px;
+}}
+
+/* ─── ComponentTree ─── */
+.comp-tree {{
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 0;
+  max-height: calc(100vh - 220px);
+  overflow-y: auto;
+  position: sticky;
+  top: 12px;
+  box-shadow: var(--shadow);
+}}
+.comp-item {{
+  padding: 7px 14px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: background .1s;
+  font-size: 13px;
+}}
+.comp-item:hover {{ background: var(--card2); }}
+.comp-item.active {{ background: var(--blue-light); color: var(--blue); font-weight: 600; }}
+.comp-item .badge {{
+  background: var(--card2);
+  color: var(--muted);
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-weight: 600;
+  min-width: 28px;
+  text-align: center;
+}}
+.comp-item.active .badge {{ background: var(--blue); color: #fff; }}
+
+/* ─── Content Area ─── */
+.content-area {{ min-height: 60vh; }}
+
+/* ─── FilterBar ─── */
+.filter-bar {{
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}}
+.filter-bar input[type=text] {{
+  flex: 1;
+  min-width: 180px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  background: var(--card);
+}}
+.filter-bar select {{
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  background: var(--card);
+}}
+.filter-bar input:focus, .filter-bar select:focus {{
+  outline: none;
+  border-color: var(--blue);
+}}
+.match-count {{
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}}
+
+/* ─── ActionBar ─── */
+.action-bar {{
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 10px;
+  box-shadow: var(--shadow);
+}}
+.action-bar .sel-info {{ font-size: 12px; color: var(--muted); margin-right: auto; }}
+
+/* ─── Buttons ─── */
+.btn {{
+  padding: 6px 14px;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  transition: all .15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}}
+.btn:hover {{ filter: brightness(0.92); }}
+.btn-blue {{ background: var(--blue); color: #fff; }}
+.btn-green {{ background: var(--green); color: #fff; }}
+.btn-orange {{ background: var(--orange); color: #fff; }}
+.btn-red {{ background: var(--red); color: #fff; }}
+.btn-outline {{
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+}}
+.btn-outline:hover {{ border-color: var(--blue); color: var(--blue); }}
+
+/* ─── Gap Item List + Virtual Scroll ─── */
+.gap-list-container {{
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}}
+.gap-list-viewport {{
+  height: calc(100vh - 340px);
+  min-height: 400px;
+  overflow-y: auto;
+  position: relative;
+}}
+.gap-list-spacer {{ position: relative; }}
+
+/* ─── Gap Card ─── */
+.gap-card {{
+  position: absolute;
+  left: 0;
+  right: 0;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  gap: 10px;
+  align-items: start;
+  transition: background .1s;
+}}
+.gap-card:hover {{ background: var(--card2); }}
+.gap-card input[type=checkbox] {{ margin-top: 3px; width: 16px; height: 16px; cursor: pointer; accent-color: var(--blue); }}
+.gap-card .card-body {{ min-width: 0; }}
+.gap-card .card-label {{ font-weight: 600; font-size: 14px; }}
+.gap-card .card-comp {{ font-size: 12px; color: var(--muted); }}
+.gap-card .card-occ {{
+  display: inline-block;
+  background: var(--orange-light);
+  color: var(--orange);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 8px;
+  margin-left: 6px;
+}}
+.gap-card .card-samples {{ font-size: 12px; color: var(--muted); margin-top: 3px; }}
+.gap-card .card-actions {{ display: flex; gap: 6px; align-items: center; flex-shrink: 0; }}
+.gap-card .card-actions select {{
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--card);
+}}
+.gap-card .note-input {{
+  width: 140px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--card);
+}}
+.gap-card .note-input:focus {{ border-color: var(--blue); outline: none; }}
+.gap-card .src-toggle {{
+  font-size: 11px;
+  color: var(--blue);
+  cursor: pointer;
+  text-decoration: underline;
+  white-space: nowrap;
+}}
+
+/* Status colors on card */
+.gap-card.status-to-fill {{ border-left: 3px solid var(--red); }}
+.gap-card.status-no-need {{ border-left: 3px solid var(--green); background: var(--green-light); }}
+.gap-card.status-to-confirm {{ border-left: 3px solid var(--blue); background: var(--blue-light); }}
+
+/* Source rows popup */
+.src-popup {{
+  position: fixed;
+  z-index: 200;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 20px rgba(0,0,0,.15);
+  padding: 12px;
+  max-width: 500px;
+  max-height: 300px;
+  overflow-y: auto;
+  font-size: 12px;
+}}
+.src-popup .src-row {{ padding: 3px 0; border-bottom: 1px solid var(--border); }}
+.src-popup .src-row:last-child {{ border-bottom: none; }}
+.src-popup .close-btn {{ float: right; cursor: pointer; font-weight: 700; color: var(--muted); }}
+
+/* ─── Toast ─── */
+.toast {{
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  padding: 10px 18px;
+  border-radius: 8px;
+  color: #fff;
+  font-weight: 600;
+  font-size: 13px;
+  z-index: 500;
+  opacity: 0;
+  transition: opacity .3s;
+  pointer-events: none;
+}}
+.toast.show {{ opacity: 1; }}
+.toast-ok {{ background: var(--green); }}
+.toast-err {{ background: var(--red); }}
+
+/* ─── Responsive ─── */
+@media (max-width: 900px) {{
+  .main-grid {{ grid-template-columns: 1fr; }}
+  .comp-tree {{
+    position: static;
+    max-height: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 8px;
+  }}
+  .comp-item {{ padding: 4px 10px; border-radius: 6px; background: var(--card2); }}
+}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Step5 项目特征审核导出工具</h1>
+  <p class="muted">{std_doc} &mdash; 生成时间 {ts} &mdash; 聚合缺口条目，交互式审核、标记、导出</p>
+
+  <!-- ═══ T005: Dashboard ═══ -->
+  <div class="dashboard" id="dashboard">
+    <div class="stat-card card-total" data-filter="" onclick="dashFilter('')">
+      <div class="label">总缺口条目</div>
+      <div class="value" id="stat-total">0</div>
+      <div class="sub">聚合后（原始未匹配 <span id="stat-raw">0</span> 条）</div>
+    </div>
+    <div class="stat-card card-pending" data-filter="pending" onclick="dashFilter('pending')">
+      <div class="label">⏳ 未处理</div>
+      <div class="value" id="stat-pending">0</div>
+    </div>
+    <div class="stat-card card-to-fill" data-filter="to-fill" onclick="dashFilter('to-fill')">
+      <div class="label">🔴 待补充</div>
+      <div class="value" id="stat-to-fill">0</div>
+    </div>
+    <div class="stat-card card-no-need" data-filter="no-need" onclick="dashFilter('no-need')">
+      <div class="label">✅ 无需补充</div>
+      <div class="value" id="stat-no-need">0</div>
+    </div>
+    <div class="stat-card card-confirm" data-filter="to-confirm" onclick="dashFilter('to-confirm')">
+      <div class="label">🔵 待确认</div>
+      <div class="value" id="stat-to-confirm">0</div>
+    </div>
+  </div>
+  <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+  <div class="muted" id="progressText" style="text-align:center;font-size:12px;margin-bottom:8px;">已处理 0 / 0 条</div>
+
+  <!-- ═══ Main Grid ═══ -->
+  <div class="main-grid">
+    <!-- T006: ComponentTree -->
+    <div class="comp-tree" id="compTree"></div>
+
+    <!-- Content -->
+    <div class="content-area">
+      <!-- T007: FilterBar -->
+      <div class="filter-bar">
+        <input type="text" id="searchInput" placeholder="搜索标签、原始文本、值表达式..." />
+        <select id="filterStatus">
+          <option value="">全部状态</option>
+          <option value="pending">未处理</option>
+          <option value="to-fill">待补充</option>
+          <option value="no-need">无需补充</option>
+          <option value="to-confirm">待确认</option>
+        </select>
+        <select id="filterLabel">
+          <option value="">全部标签</option>
+        </select>
+        <span class="match-count" id="matchCount"></span>
+      </div>
+
+      <!-- T009: ActionBar -->
+      <div class="action-bar">
+        <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;">
+          <input type="checkbox" id="selectAll" onchange="toggleSelectAll(this.checked)" /> 全选
+        </label>
+        <span class="sel-info" id="selInfo">已选 0 / 共 0 条</span>
+        <select id="batchStatus" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;">
+          <option value="">批量设置状态...</option>
+          <option value="to-fill">标记为 待补充</option>
+          <option value="no-need">标记为 无需补充</option>
+          <option value="to-confirm">标记为 待确认</option>
+          <option value="pending">重置为 未处理</option>
+        </select>
+        <button class="btn btn-blue" onclick="applyBatchStatus()">应用</button>
+        <button class="btn btn-green" onclick="exportExcel()">📊 导出 Excel</button>
+        <button class="btn btn-orange" onclick="exportJSON()">📄 导出 JSON</button>
+        <button class="btn btn-outline" onclick="saveProgress()">💾 保存进度</button>
+        <button class="btn btn-outline" onclick="loadProgressFile()">📂 恢复进度</button>
+      </div>
+
+      <!-- T007: Virtual scroll gap list -->
+      <div class="gap-list-container">
+        <div class="gap-list-viewport" id="viewport">
+          <div class="gap-list-spacer" id="spacer"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+<div id="srcPopup" class="src-popup" style="display:none;"></div>
+<input type="file" id="fileInput" accept=".json" style="display:none" onchange="handleProgressUpload(event)" />
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// DATA INJECTION (T003)
+// ═══════════════════════════════════════════════════════════════
+const GAP_DATA = {gap_json};
+const COMP_REF = {comp_ref_json};
+const INIT_STATS = {stats_json};
+
+// ═══════════════════════════════════════════════════════════════
+// STATE MANAGEMENT
+// ═══════════════════════════════════════════════════════════════
+const STORAGE_KEY = 'step5_audit_progress';
+
+// Audit state per item_key
+const auditState = {{}};  // item_key -> {{status, note}}
+const selected = new Set();  // item_key set
+
+let activeComp = '';   // '' = all
+let activeStatus = ''; // dashboard filter
+let filteredItems = [];
+let currentQuery = '';
+
+// Load from localStorage
+function loadLocalState() {{
+  try {{
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {{
+      const obj = JSON.parse(saved);
+      Object.assign(auditState, obj);
+      console.log('Restored audit state:', Object.keys(obj).length, 'items');
+    }}
+  }} catch(e) {{ console.warn('localStorage restore failed:', e); }}
+}}
+
+function saveLocalState() {{
+  try {{
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(auditState));
+  }} catch(e) {{ console.warn('localStorage save failed:', e); }}
+}}
+
+function getStatus(itemKey) {{
+  return (auditState[itemKey] || {{}}).status || 'pending';
+}}
+function getNote(itemKey) {{
+  return (auditState[itemKey] || {{}}).note || '';
+}}
+function setAudit(itemKey, status, note) {{
+  if (!auditState[itemKey]) auditState[itemKey] = {{}};
+  if (status !== undefined) auditState[itemKey].status = status;
+  if (note !== undefined) auditState[itemKey].note = note;
+  saveLocalState();
+  updateDashboard();
+}}
+
+// ═══════════════════════════════════════════════════════════════
+// T005: DASHBOARD
+// ═══════════════════════════════════════════════════════════════
+function updateDashboard() {{
+  let pending=0, toFill=0, noNeed=0, toConfirm=0;
+  for (const g of GAP_DATA) {{
+    const s = getStatus(g.item_key);
+    if (s === 'pending') pending++;
+    else if (s === 'to-fill') toFill++;
+    else if (s === 'no-need') noNeed++;
+    else if (s === 'to-confirm') toConfirm++;
+  }}
+  const total = GAP_DATA.length;
+  const processed = total - pending;
+
+  document.getElementById('stat-total').textContent = total;
+  document.getElementById('stat-raw').textContent = INIT_STATS.total_unmatched;
+  document.getElementById('stat-pending').textContent = pending;
+  document.getElementById('stat-to-fill').textContent = toFill;
+  document.getElementById('stat-no-need').textContent = noNeed;
+  document.getElementById('stat-to-confirm').textContent = toConfirm;
+
+  const pct = total > 0 ? (processed / total * 100) : 0;
+  document.getElementById('progressFill').style.width = pct.toFixed(1) + '%';
+  document.getElementById('progressText').textContent = `已处理 ${{processed}} / ${{total}} 条 (${{pct.toFixed(1)}}%)`;
+
+  // Highlight active dashboard card
+  document.querySelectorAll('.stat-card').forEach(c => {{
+    c.classList.toggle('active', c.dataset.filter === activeStatus);
+  }});
+}}
+
+function dashFilter(status) {{
+  activeStatus = activeStatus === status ? '' : status;
+  document.getElementById('filterStatus').value = activeStatus;
+  applyFilters();
+}}
+
+// ═══════════════════════════════════════════════════════════════
+// T006: COMPONENT TREE
+// ═══════════════════════════════════════════════════════════════
+function renderCompTree() {{
+  const tree = document.getElementById('compTree');
+  // Count by component
+  const counts = {{}};
+  for (const g of GAP_DATA) {{
+    counts[g.source_component] = (counts[g.source_component] || 0) + 1;
+  }}
+  const sorted = Object.entries(counts).sort((a,b) => b[1] - a[1]);
+
+  let html = `<div class="comp-item ${{activeComp===''?'active':''}}" onclick="selectComp('')">
+    <span>全部构件</span><span class="badge">${{GAP_DATA.length}}</span>
+  </div>`;
+  for (const [comp, cnt] of sorted) {{
+    const esc = comp.replace(/</g,'&lt;');
+    html += `<div class="comp-item ${{activeComp===comp?'active':''}}" onclick="selectComp('${{esc.replace(/'/g,"\\\\'")}}')" title="${{esc}}">
+      <span>${{esc}}</span><span class="badge">${{cnt}}</span>
+    </div>`;
+  }}
+  tree.innerHTML = html;
+}}
+
+function selectComp(comp) {{
+  activeComp = comp;
+  renderCompTree();
+  applyFilters();
+}}
+
+// ═══════════════════════════════════════════════════════════════
+// T007: FILTER + VIRTUAL SCROLL
+// ═══════════════════════════════════════════════════════════════
+const ITEM_HEIGHT = 64;  // px per card
+const BUFFER = 20;       // extra items above/below
+
+function applyFilters() {{
+  currentQuery = document.getElementById('searchInput').value.toLowerCase().trim();
+  const statusFilter = document.getElementById('filterStatus').value || activeStatus;
+  const labelFilter = document.getElementById('filterLabel').value;
+
+  // Sync activeStatus
+  if (document.getElementById('filterStatus').value) {{
+    activeStatus = document.getElementById('filterStatus').value;
+  }}
+
+  filteredItems = GAP_DATA.filter(g => {{
+    if (activeComp && g.source_component !== activeComp) return false;
+    if (statusFilter && getStatus(g.item_key) !== statusFilter) return false;
+    if (labelFilter && g.label !== labelFilter) return false;
+    if (currentQuery) {{
+      const hay = (g.label + ' ' + g.raw_text + ' ' + (g.value_samples||[]).join(' ') + ' ' + g.source_component).toLowerCase();
+      if (!hay.includes(currentQuery)) return false;
+    }}
+    return true;
+  }});
+
+  document.getElementById('matchCount').textContent = `${{filteredItems.length}} 条`;
+  selected.clear();
+  document.getElementById('selectAll').checked = false;
+  updateSelInfo();
+  updateDashboard();
+  renderVirtualList();
+}}
+
+// Virtual scroller
+const viewport = document.getElementById('viewport');
+const spacer = document.getElementById('spacer');
+
+function renderVirtualList() {{
+  const totalH = filteredItems.length * ITEM_HEIGHT;
+  spacer.style.height = totalH + 'px';
+  // Clear existing cards
+  spacer.querySelectorAll('.gap-card').forEach(el => el.remove());
+  onScroll();
+}}
+
+let lastStart = -1, lastEnd = -1;
+function onScroll() {{
+  const scrollTop = viewport.scrollTop;
+  const viewH = viewport.clientHeight;
+  let start = Math.floor(scrollTop / ITEM_HEIGHT) - BUFFER;
+  let end = Math.ceil((scrollTop + viewH) / ITEM_HEIGHT) + BUFFER;
+  start = Math.max(0, start);
+  end = Math.min(filteredItems.length, end);
+
+  if (start === lastStart && end === lastEnd) return;
+
+  // Remove out-of-range cards
+  const existing = spacer.querySelectorAll('.gap-card');
+  existing.forEach(el => {{
+    const idx = parseInt(el.dataset.idx);
+    if (idx < start || idx >= end) el.remove();
+  }});
+
+  // Existing indices
+  const rendered = new Set();
+  spacer.querySelectorAll('.gap-card').forEach(el => rendered.add(parseInt(el.dataset.idx)));
+
+  // Render missing
+  const frag = document.createDocumentFragment();
+  for (let i = start; i < end; i++) {{
+    if (rendered.has(i)) continue;
+    frag.appendChild(createCard(filteredItems[i], i));
+  }}
+  spacer.appendChild(frag);
+
+  lastStart = start;
+  lastEnd = end;
+}}
+viewport.addEventListener('scroll', onScroll, {{ passive: true }});
+
+// ═══════════════════════════════════════════════════════════════
+// T008: GAP ITEM CARD
+// ═══════════════════════════════════════════════════════════════
+function createCard(item, idx) {{
+  const div = document.createElement('div');
+  div.className = 'gap-card';
+  div.dataset.idx = idx;
+  div.dataset.key = item.item_key;
+  div.style.top = (idx * ITEM_HEIGHT) + 'px';
+  div.style.height = ITEM_HEIGHT + 'px';
+
+  const st = getStatus(item.item_key);
+  if (st !== 'pending') div.classList.add('status-' + st);
+
+  const isChecked = selected.has(item.item_key) ? 'checked' : '';
+  const note = getNote(item.item_key).replace(/"/g, '&quot;');
+  const samples = (item.value_samples || []).join(', ');
+  const escLabel = item.label.replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  const escComp = item.source_component.replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  const srcCount = (item.source_rows || []).length;
+  // Safely encode item_key for use in HTML attributes (avoid XSS via crafted labels)
+  const safeKey = btoa(unescape(encodeURIComponent(item.item_key)));
+
+  div.innerHTML = `
+    <input type="checkbox" ${{isChecked}} onchange="toggleSelectB64('${{safeKey}}', this.checked)" />
+    <div class="card-body">
+      <span class="card-label">${{escLabel}}</span>
+      <span class="card-occ">${{item.occurrence_count}}次</span>
+      <span class="card-comp">&nbsp;·&nbsp;${{escComp}}</span>
+      ${{samples ? `<div class="card-samples">值样本: ${{samples.replace(/</g,'&lt;')}}</div>` : ''}}
+    </div>
+    <div class="card-actions">
+      <select onchange="setAuditB64('${{safeKey}}', this.value, undefined); refreshCard(${{idx}});">
+        <option value="pending" ${{st==='pending'?'selected':''}}>未处理</option>
+        <option value="to-fill" ${{st==='to-fill'?'selected':''}}>待补充</option>
+        <option value="no-need" ${{st==='no-need'?'selected':''}}>无需补充</option>
+        <option value="to-confirm" ${{st==='to-confirm'?'selected':''}}>待确认</option>
+      </select>
+      <input class="note-input" placeholder="批注..." value="${{note}}"
+        onblur="setAuditB64('${{safeKey}}', undefined, this.value)" />
+      <span class="src-toggle" onclick="showSourcesB64(event, '${{safeKey}}')">来源(${{srcCount}})</span>
+    </div>`;
+  return div;
+}}
+
+function refreshCard(idx) {{
+  const old = spacer.querySelector(`.gap-card[data-idx="${{idx}}"]`);
+  if (old) {{
+    const card = createCard(filteredItems[idx], idx);
+    old.replaceWith(card);
+  }}
+}}
+
+// Source rows popup
+function showSources(evt, itemKey) {{
+  evt.stopPropagation();
+  const item = GAP_DATA.find(g => g.item_key === itemKey);
+  if (!item) return;
+  const popup = document.getElementById('srcPopup');
+  const rows = item.source_rows || [];
+  let html = `<span class="close-btn" onclick="document.getElementById('srcPopup').style.display='none'">&times;</span>`;
+  html += `<div style="font-weight:600;margin-bottom:6px;">"${{item.label}}" 出现在 ${{rows.length}} 个清单行</div>`;
+  for (const r of rows.slice(0, 50)) {{
+    html += `<div class="src-row"><b>${{r.project_code}}</b> ${{(r.project_name||'').replace(/</g,'&lt;')}}</div>`;
+  }}
+  if (rows.length > 50) html += `<div class="src-row muted">... 及另 ${{rows.length - 50}} 行</div>`;
+  popup.innerHTML = html;
+  popup.style.display = 'block';
+  popup.style.left = Math.min(evt.clientX, window.innerWidth - 520) + 'px';
+  popup.style.top = Math.min(evt.clientY, window.innerHeight - 320) + 'px';
+}}
+document.addEventListener('click', () => document.getElementById('srcPopup').style.display = 'none');
+
+// ═══════════════════════════════════════════════════════════════
+// T009: SELECTION + BATCH
+// ═══════════════════════════════════════════════════════════════
+function decodeKey(b64) {{
+  return decodeURIComponent(escape(atob(b64)));
+}}
+function toggleSelectB64(b64, checked) {{ toggleSelect(decodeKey(b64), checked); }}
+function setAuditB64(b64, status, note) {{ setAudit(decodeKey(b64), status, note); }}
+function showSourcesB64(evt, b64) {{ showSources(evt, decodeKey(b64)); }}
+function toggleSelect(key, checked) {{
+  if (checked) selected.add(key); else selected.delete(key);
+  updateSelInfo();
+}}
+function toggleSelectAll(checked) {{
+  selected.clear();
+  if (checked) filteredItems.forEach(g => selected.add(g.item_key));
+  // Re-render visible checkboxes
+  spacer.querySelectorAll('.gap-card input[type=checkbox]').forEach(cb => cb.checked = checked);
+  updateSelInfo();
+}}
+function updateSelInfo() {{
+  document.getElementById('selInfo').textContent = `已选 ${{selected.size}} / 共 ${{filteredItems.length}} 条`;
+}}
+function applyBatchStatus() {{
+  const val = document.getElementById('batchStatus').value;
+  if (!val) {{ toast('请先选择目标状态', 'err'); return; }}
+  if (selected.size === 0) {{ toast('请先勾选条目', 'err'); return; }}
+  for (const key of selected) {{
+    setAudit(key, val, undefined);
+  }}
+  document.getElementById('batchStatus').value = '';
+  // Force re-render
+  lastStart = -1; lastEnd = -1; onScroll();
+  toast(`已将 ${{selected.size}} 条标记为 ${{val}}`, 'ok');
+}}
+
+// ═══════════════════════════════════════════════════════════════
+// T010: EXPORT EXCEL + JSON
+// ═══════════════════════════════════════════════════════════════
+function exportExcel() {{
+  if (typeof XLSX === 'undefined') {{ toast('SheetJS 未加载，请检查网络', 'err'); return; }}
+  const wb = XLSX.utils.book_new();
+
+  // Collect items to export (status = to-fill, or all if none marked)
+  let exportItems = GAP_DATA.filter(g => getStatus(g.item_key) === 'to-fill');
+  if (exportItems.length === 0) {{
+    exportItems = GAP_DATA.filter(g => getStatus(g.item_key) !== 'no-need');
+  }}
+
+  // Group by component
+  const groups = {{}};
+  for (const g of exportItems) {{
+    if (!groups[g.source_component]) groups[g.source_component] = [];
+    groups[g.source_component].push(g);
+  }}
+
+  // Summary sheet
+  const summaryData = [
+    ['构件类型', '缺口数', '待补充', '无需补充', '待确认', '未处理'],
+  ];
+  const compEntries = Object.entries(groups).sort((a,b) => b[1].length - a[1].length);
+  for (const [comp, items] of compEntries) {{
+    summaryData.push([
+      comp,
+      items.length,
+      items.filter(g => getStatus(g.item_key)==='to-fill').length,
+      items.filter(g => getStatus(g.item_key)==='no-need').length,
+      items.filter(g => getStatus(g.item_key)==='to-confirm').length,
+      items.filter(g => getStatus(g.item_key)==='pending').length,
+    ]);
+  }}
+  const summaryWs = XLSX.utils.aoa_to_sheet(summaryData);
+  summaryWs['!cols'] = [{{wch:20}},{{wch:8}},{{wch:8}},{{wch:10}},{{wch:8}},{{wch:8}}];
+  XLSX.utils.book_append_sheet(wb, summaryWs, '总览');
+
+  // Per-component sheets
+  const headers = [
+    'A:特征标签', 'B:原始文本', 'C:出现次数', 'D:值样本',
+    'E:当前属性名', 'F:当前属性编码', 'G:审核状态', 'H:批注',
+    'I:来源项目编码(首个)',
+    'J:回填-属性名', 'K:回填-属性编码', 'L:回填-值域'
+  ];
+  for (const [comp, items] of compEntries) {{
+    const sheetName = comp.substring(0, 31).replace(/[\\[\\]\\*\\?\\/\\\\:]/g, '_');
+    const data = [headers.map(h => h.split(':')[1])];
+    for (const g of items) {{
+      const firstSrc = (g.source_rows || [])[0] || {{}};
+      data.push([
+        g.label,
+        g.raw_text,
+        g.occurrence_count,
+        (g.value_samples || []).join('; '),
+        g.attribute_name || '',
+        g.attribute_code || '',
+        getStatus(g.item_key),
+        getNote(g.item_key),
+        firstSrc.project_code || '',
+        '', '', ''  // J/K/L 回填列
+      ]);
+    }}
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    ws['!cols'] = [
+      {{wch:18}},{{wch:18}},{{wch:8}},{{wch:24}},
+      {{wch:14}},{{wch:12}},{{wch:10}},{{wch:20}},
+      {{wch:16}},
+      {{wch:16}},{{wch:14}},{{wch:20}}
+    ];
+    // Yellow background for J/K/L header cells
+    for (const col of ['J1','K1','L1']) {{
+      if (ws[col]) {{
+        ws[col].s = {{ fill: {{ fgColor: {{ rgb: "FFFF00" }} }} }};
+      }}
+    }}
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  }}
+
+  XLSX.writeFile(wb, 'feature_audit_export.xlsx');
+  toast(`已导出 ${{exportItems.length}} 条到 Excel (${{compEntries.length}} 个 sheet)`, 'ok');
+}}
+
+function exportJSON() {{
+  const exportData = GAP_DATA.map(g => ({{
+    ...g,
+    audit_status: getStatus(g.item_key),
+    audit_note: getNote(g.item_key),
+  }}));
+  downloadJSON(exportData, 'feature_audit_export.json');
+  toast(`已导出 ${{exportData.length}} 条 JSON`, 'ok');
+}}
+
+function saveProgress() {{
+  downloadJSON(auditState, 'feature_audit_progress.json');
+  toast('审核进度已保存', 'ok');
+}}
+
+function loadProgressFile() {{
+  document.getElementById('fileInput').click();
+}}
+function handleProgressUpload(evt) {{
+  const file = evt.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {{
+    try {{
+      const obj = JSON.parse(e.target.result);
+      Object.assign(auditState, obj);
+      saveLocalState();
+      applyFilters();
+      toast(`已恢复 ${{Object.keys(obj).length}} 条审核状态`, 'ok');
+    }} catch(err) {{
+      toast('JSON 解析失败: ' + err.message, 'err');
+    }}
+  }};
+  reader.readAsText(file);
+  evt.target.value = '';
+}}
+
+function downloadJSON(data, filename) {{
+  const blob = new Blob([JSON.stringify(data, null, 2)], {{ type: 'application/json' }});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}}
+
+// ═══════════════════════════════════════════════════════════════
+// TOAST
+// ═══════════════════════════════════════════════════════════════
+function toast(msg, type) {{
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast toast-' + type + ' show';
+  setTimeout(() => el.classList.remove('show'), 2500);
+}}
+
+// ═══════════════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════════════
+function init() {{
+  loadLocalState();
+
+  // Populate label filter
+  const labelSel = document.getElementById('filterLabel');
+  for (const [label] of INIT_STATS.top_labels || []) {{
+    const opt = document.createElement('option');
+    opt.value = label;
+    opt.textContent = label;
+    labelSel.appendChild(opt);
+  }}
+
+  // Bind filter events
+  document.getElementById('searchInput').addEventListener('input', applyFilters);
+  document.getElementById('filterStatus').addEventListener('change', function() {{
+    activeStatus = this.value;
+    applyFilters();
+  }});
+  document.getElementById('filterLabel').addEventListener('change', applyFilters);
+
+  renderCompTree();
+  applyFilters();
+}}
+
+init();
+</script>
+</body>
+</html>"""
+
+
+# ──────────────────────────── Main ────────────────────────────
+def main():
+    parser = argparse.ArgumentParser(description="Step5 项目特征审核导出工具")
+    parser.add_argument("--step3-result", default=DEFAULT_STEP3_RESULT,
+                        help="Step3 匹配结果 JSON 路径")
+    parser.add_argument("--components", default=DEFAULT_COMPONENTS,
+                        help="构件库 components.json 路径")
+    parser.add_argument("--output", default=None,
+                        help="输出 HTML 路径（默认: data/output/step5/feature_audit_tool.html）")
+    args = parser.parse_args()
+
+    step3_path = Path(args.step3_result)
+    comps_path = Path(args.components)
+
+    print("Step5 项目特征审核导出工具")
+    print("=" * 50)
+
+    # T001: Load
+    data = load_step3_results(step3_path)
+    components = load_components_library(comps_path)
+
+    # T002: Extract & Aggregate
+    raw_items = extract_gap_items(data["rows"])
+    gap_items = aggregate_by_component(raw_items)
+    stats = build_stats(gap_items, data["rows"])
+
+    # Build component reference
+    comp_ref = build_comp_ref(components)
+
+    # T003-T010: Build HTML
+    html = build_audit_html(gap_items, comp_ref, stats, data["meta"])
+
+    # Output
+    if args.output:
+        out_path = Path(args.output)
+    else:
+        out_path = Path(DEFAULT_OUTPUT_DIR) / OUTPUT_HTML_NAME
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(html, encoding="utf-8")
+
+    size_kb = out_path.stat().st_size / 1024
+    print("=" * 50)
+    print(f"  输出: {out_path} ({size_kb:.0f} KB)")
+    print(f"  缺口条目: {len(gap_items)} (原始未匹配 {stats['total_unmatched']})")
+    print(f"  构件类型: {stats['total_components']}")
+    print(f"  Top 标签: {', '.join(l for l,_ in stats['top_labels'][:5])}")
+
+
+if __name__ == "__main__":
+    main()

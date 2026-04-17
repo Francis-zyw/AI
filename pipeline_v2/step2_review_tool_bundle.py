@@ -1,0 +1,1185 @@
+from __future__ import annotations
+
+import json
+import shutil
+from pathlib import Path
+from typing import Any, Dict
+
+from .step2_review_html import APP_VERSION
+
+TOOL_HTML_NAME = "第二步结果人工修订工具.html"
+TOOL_BAT_NAME = "打开人工修订工具.bat"
+TOOL_README_NAME = "使用说明.txt"
+DELIVERY_INPUT_DIR_NAME = "待修订输入"
+
+TOOL_HTML_TEMPLATE = """<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>第二步结果人工修订工具</title>
+  <style>
+    :root {
+      --bg: #f5efe3;
+      --surface: #fffdf8;
+      --surface-soft: #f8f2e7;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --line: #dfd1bb;
+      --accent: #8e5f3a;
+      --accent-2: #215a63;
+      --ok: #2c7a52;
+      --warn: #a7651d;
+      --danger: #b04336;
+      --shadow: 0 14px 30px rgba(84, 57, 26, 0.08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+      background:
+        radial-gradient(circle at top right, rgba(142, 95, 58, 0.1), transparent 30%),
+        linear-gradient(180deg, #faf6ee 0%, var(--bg) 100%);
+      color: var(--text);
+    }
+    .wrap {
+      max-width: 1760px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    .hero, .panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
+    }
+    .hero {
+      overflow: hidden;
+      background:
+        linear-gradient(135deg, rgba(142, 95, 58, 0.96), rgba(33, 90, 99, 0.95)),
+        var(--surface);
+      color: #fffaf4;
+      padding: 28px;
+    }
+    .hero h1 {
+      margin: 0 0 10px;
+      font-size: 32px;
+    }
+    .hero p {
+      margin: 0;
+      line-height: 1.7;
+      max-width: 1100px;
+      color: rgba(255, 250, 244, 0.92);
+    }
+    .hero-meta {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 13px;
+      background: rgba(255, 250, 244, 0.14);
+      border: 1px solid rgba(255, 250, 244, 0.22);
+    }
+    .panel {
+      margin-top: 18px;
+      padding: 20px 22px 24px;
+    }
+    .panel h2 {
+      margin: 0 0 8px;
+      font-size: 22px;
+    }
+    .panel p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+    .file-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 18px;
+    }
+    .file-card, .card {
+      background: var(--surface-soft);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 14px;
+    }
+    .file-card label, .card .label {
+      display: block;
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+    .file-card input[type="file"] {
+      width: 100%;
+    }
+    .actions, .tabs, .filters, .inline-stats {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+    }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 18px;
+    }
+    .card .value {
+      font-size: 24px;
+      font-weight: 800;
+      line-height: 1.2;
+      word-break: break-word;
+    }
+    button, .fake-button {
+      border: 1px solid var(--line);
+      background: var(--surface-soft);
+      color: var(--text);
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-size: 14px;
+      cursor: pointer;
+      box-shadow: 0 5px 12px rgba(84, 57, 26, 0.06);
+    }
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    button.secondary {
+      background: var(--accent-2);
+      border-color: var(--accent-2);
+      color: #fff;
+    }
+    .status-bar {
+      margin-top: 14px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: var(--surface-soft);
+      color: var(--muted);
+      line-height: 1.6;
+    }
+    .status-bar.ok { color: var(--ok); border-color: rgba(44, 122, 82, 0.25); background: rgba(44, 122, 82, 0.08); }
+    .status-bar.warn { color: var(--warn); border-color: rgba(167, 101, 29, 0.25); background: rgba(167, 101, 29, 0.08); }
+    .status-bar.error { color: var(--danger); border-color: rgba(176, 67, 54, 0.25); background: rgba(176, 67, 54, 0.08); }
+    .tab {
+      border-radius: 999px;
+      padding: 9px 16px;
+      border: 1px solid var(--line);
+      background: var(--surface-soft);
+      cursor: pointer;
+    }
+    .tab.active {
+      background: #efe0cc;
+      border-color: #d8b28c;
+      color: #6f4320;
+      font-weight: 700;
+    }
+    .filters {
+      display: grid;
+      grid-template-columns: 2fr 1fr 1fr 1fr;
+      gap: 12px;
+      align-items: center;
+    }
+    input[type="text"], input[type="number"], select, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: #fff;
+      color: var(--text);
+      font-size: 14px;
+    }
+    textarea {
+      min-height: 82px;
+      resize: vertical;
+      line-height: 1.5;
+    }
+    .inline-stats {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .table-wrap {
+      overflow: auto;
+      margin-top: 14px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: #fffdf8;
+    }
+    table {
+      width: 100%;
+      min-width: 1520px;
+      border-collapse: separate;
+      border-spacing: 0;
+    }
+    th, td {
+      padding: 11px 10px;
+      border-bottom: 1px solid #eadfce;
+      vertical-align: top;
+      background: rgba(255, 253, 248, 0.92);
+    }
+    th {
+      position: sticky;
+      top: 0;
+      background: #f0e4d2;
+      color: #5d4024;
+      text-align: left;
+      z-index: 2;
+      white-space: nowrap;
+      font-size: 13px;
+    }
+    td.index-col, th.index-col {
+      position: sticky;
+      left: 0;
+      z-index: 3;
+      background: #f8f0e2;
+      min-width: 66px;
+    }
+    td.small, th.small { min-width: 92px; }
+    td.medium, th.medium { min-width: 160px; }
+    td.large, th.large { min-width: 240px; }
+    td.xlarge, th.xlarge { min-width: 320px; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      border: 1px solid transparent;
+      margin-bottom: 8px;
+    }
+    .badge.matched, .badge.confirmed { color: var(--ok); background: rgba(44, 122, 82, 0.08); border-color: rgba(44, 122, 82, 0.2); }
+    .badge.candidate_only, .badge.pending { color: var(--warn); background: rgba(167, 101, 29, 0.08); border-color: rgba(167, 101, 29, 0.2); }
+    .badge.conflict, .badge.adjusted, .badge.suggested { color: var(--accent-2); background: rgba(33, 90, 99, 0.08); border-color: rgba(33, 90, 99, 0.2); }
+    .badge.unmatched, .badge.rejected, .badge.unreviewed { color: var(--danger); background: rgba(176, 67, 54, 0.08); border-color: rgba(176, 67, 54, 0.2); }
+    .empty {
+      padding: 34px;
+      color: var(--muted);
+      text-align: center;
+    }
+    @media (max-width: 1200px) {
+      .file-grid, .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .filters { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 720px) {
+      .wrap { padding: 14px; }
+      .hero { padding: 20px; }
+      .hero h1 { font-size: 26px; }
+      .file-grid, .cards, .filters { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <h1>第二步结果人工修订工具</h1>
+      <p>这个工具适合直接发给产品经理使用。产品在 Windows 电脑上双击打开后，可以自己选择第二步结果文件，在线修订匹配总结果和源构件词库，再自己选择保存位置导出，不需要安装任何环境。</p>
+      <div class="hero-meta" id="heroMeta"></div>
+    </section>
+
+    <section class="panel">
+      <h2>文件加载</h2>
+      <p>有两种方式：一是直接选择第二步原始结果文件；二是选择之前导出的修订包继续修改。</p>
+      <div class="file-grid">
+        <div class="file-card">
+          <label for="componentInput">匹配总结果 JSON</label>
+          <input id="componentInput" type="file" accept=".json,application/json" />
+        </div>
+        <div class="file-card">
+          <label for="synonymInput">源构件词库 JSON</label>
+          <input id="synonymInput" type="file" accept=".json,application/json" />
+        </div>
+        <div class="file-card">
+          <label for="summaryInput">运行摘要 JSON（可选）</label>
+          <input id="summaryInput" type="file" accept=".json,application/json" />
+        </div>
+        <div class="file-card">
+          <label for="packageInput">已修订包 JSON（可选）</label>
+          <input id="packageInput" type="file" accept=".json,application/json" />
+        </div>
+      </div>
+      <div class="actions">
+        <button id="loadStep2Btn" class="primary">加载第二步结果文件</button>
+        <button id="loadPackageBtn" class="secondary">加载已修订包</button>
+        <button id="resetBtn">恢复为空白工具</button>
+      </div>
+      <div id="statusBar" class="status-bar">请先选择文件。建议至少加载“匹配总结果 JSON”，源构件词库和运行摘要可选。</div>
+    </section>
+
+    <section class="panel">
+      <h2>导出</h2>
+      <p>Edge 或 Chrome 浏览器会弹出系统保存对话框，由产品自己选导出路径；如果浏览器不支持，则会退回普通下载。</p>
+      <div class="actions">
+        <button id="savePackageBtn" class="primary">导出修订包 JSON</button>
+        <button id="saveMatchingBtn">导出最终匹配结果 JSON</button>
+        <button id="saveSynonymBtn">导出最终源构件词库 JSON</button>
+        <button id="saveSummaryBtn">导出最终摘要 JSON</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>总体概览</h2>
+      <p>建议优先检查候选待定、未匹配、冲突待核和低置信度项。数组类字段按“每行一个值”的方式编辑即可。</p>
+      <div class="cards" id="summaryCards"></div>
+      <div class="actions">
+        <button id="addRowBtn">新增当前表行</button>
+        <button id="rebuildSynonymsBtn">按匹配总结果重建源构件词库</button>
+      </div>
+      <div class="tabs">
+        <button id="tabMappings" class="tab active">匹配总结果</button>
+        <button id="tabSynonyms" class="tab">源构件词库</button>
+      </div>
+      <div class="filters">
+        <input id="searchInput" type="text" placeholder="搜索：构件名 / 标准名 / 候选名 / 证据 / 推理说明" />
+        <select id="matchStatusFilter"><option value="">全部匹配状态</option></select>
+        <select id="reviewStatusFilter"><option value="">全部复核状态</option></select>
+        <select id="rowVisibilityFilter">
+          <option value="active">仅显示未删除行</option>
+          <option value="all">显示全部</option>
+          <option value="deleted">仅显示已删除行</option>
+        </select>
+      </div>
+      <div class="inline-stats" id="inlineStats"></div>
+      <div class="table-wrap">
+        <table>
+          <thead id="tableHead"></thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+        <div id="emptyState" class="empty" style="display:none;">当前没有可展示的记录，请先加载文件。</div>
+      </div>
+    </section>
+  </div>
+
+  <script id="initialReviewData" type="application/json">__INITIAL_STATE__</script>
+  <script>
+    const ARRAY_FIELDS = {
+      mappings: ["source_aliases", "standard_aliases", "candidate_standard_names", "evidence_paths", "evidence_texts"],
+      synonyms: ["aliases", "source_component_names", "match_types", "review_statuses", "evidence_paths", "notes"]
+    };
+    const OPTION_SETS = {
+      match_status: ["matched", "candidate_only", "conflict", "unmatched"],
+      review_status: ["pending", "confirmed", "adjusted", "rejected", "unreviewed", "suggested"]
+    };
+    const LABEL_MAP = {
+      matched: "已匹配",
+      candidate_only: "候选待定",
+      conflict: "冲突待核",
+      unmatched: "未匹配",
+      pending: "待复核",
+      confirmed: "已确认",
+      adjusted: "已调整",
+      rejected: "已驳回",
+      unreviewed: "未复核",
+      suggested: "建议确认"
+    };
+
+    const initialState = JSON.parse(document.getElementById("initialReviewData").textContent);
+    let baseState = deepClone(initialState);
+    let state = hydratePackage(deepClone(initialState));
+    let activeTab = "mappings";
+
+    const mappingColumns = [
+      { key: "record_id", label: "ID", type: "readonly", cls: "small" },
+      { key: "source_component_name", label: "来源构件名", type: "text", cls: "medium" },
+      { key: "source_aliases", label: "来源别名", type: "textarea", cls: "large" },
+      { key: "selected_standard_name", label: "当前标准名", type: "text", cls: "medium" },
+      { key: "standard_aliases", label: "标准别名", type: "textarea", cls: "large" },
+      { key: "candidate_standard_names", label: "候选标准名", type: "textarea", cls: "large" },
+      { key: "match_type", label: "匹配方式", type: "text", cls: "medium" },
+      { key: "match_status", label: "匹配状态", type: "select", options: OPTION_SETS.match_status, cls: "small" },
+      { key: "confidence", label: "置信度", type: "number", cls: "small" },
+      { key: "review_status", label: "复核状态", type: "select", options: OPTION_SETS.review_status, cls: "small" },
+      { key: "evidence_paths", label: "证据路径", type: "textarea", cls: "xlarge" },
+      { key: "evidence_texts", label: "证据文本", type: "textarea", cls: "xlarge" },
+      { key: "reasoning", label: "推理说明", type: "textarea", cls: "xlarge" },
+      { key: "manual_notes", label: "人工备注", type: "textarea", cls: "large" },
+      { key: "delete_row", label: "删除", type: "checkbox", cls: "small" }
+    ];
+
+    const synonymColumns = [
+      { key: "record_id", label: "ID", type: "readonly", cls: "small" },
+      { key: "source_component_name", label: "源构件", type: "text", cls: "medium" },
+      { key: "aliases", label: "同义词别名", type: "textarea", cls: "large" },
+      { key: "chapter_nodes", label: "章节/节点", type: "textarea", cls: "large" },
+      { key: "selected_standard_name", label: "当前匹配结果", type: "text", cls: "medium" },
+      { key: "match_status", label: "匹配状态", type: "text", cls: "small" },
+      { key: "delete_row", label: "删除", type: "checkbox", cls: "small" }
+    ];
+
+    function emptyPackage() {
+      return {
+        meta: {
+          task_name: "step2_manual_review_package",
+          generated_at: new Date().toISOString(),
+          app_version: "APP_VERSION_PLACEHOLDER",
+          standard_document: "",
+          source_step2_dir: "",
+          source_component_result_path: "",
+          source_synonym_library_path: "",
+          source_run_summary_path: ""
+        },
+        component_matching_result: {
+          meta: {
+            task_name: "component_standard_name_matching",
+            standard_document: "",
+            generated_at: new Date().toISOString(),
+            review_stage: "manual_review_html"
+          },
+          mappings: []
+        },
+        synonym_library: {
+          meta: {
+            task_name: "component_standard_name_synonym_library",
+            standard_document: "",
+            generated_at: new Date().toISOString(),
+            source_review_stage: "manual_review_html"
+          },
+          synonym_library: [],
+          unmatched_components: []
+        },
+        source_run_summary: {}
+      };
+    }
+
+    function deepClone(value) {
+      return JSON.parse(JSON.stringify(value));
+    }
+
+    function labelOf(value) {
+      const key = String(value || "").trim();
+      return LABEL_MAP[key] || key;
+    }
+
+    function escapeHtml(value) {
+      if (value === null || value === undefined) return "";
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+    }
+
+    function dedupe(values) {
+      const result = [];
+      const seen = new Set();
+      for (const raw of values || []) {
+        const item = String(raw || "").trim();
+        if (!item || seen.has(item)) continue;
+        seen.add(item);
+        result.push(item);
+      }
+      return result;
+    }
+
+    function normalizeArray(value) {
+      if (Array.isArray(value)) {
+        return dedupe(value.map(item => String(item || "").trim()).filter(Boolean));
+      }
+      if (typeof value === "string") {
+        return dedupe(
+          value
+            .replaceAll("；", ";")
+            .replaceAll("，", ",")
+            .split(/\\n|;|,/)
+            .map(item => item.trim())
+            .filter(Boolean)
+        );
+      }
+      if (value === null || value === undefined || value === "") {
+        return [];
+      }
+      return [String(value).trim()].filter(Boolean);
+    }
+
+    function arrayText(value) {
+      return normalizeArray(value).join("\\n");
+    }
+
+    function normalizeConfidence(value) {
+      if (value === null || value === undefined || value === "") return "";
+      const num = Number(value);
+      if (!Number.isFinite(num)) return "";
+      return Math.max(0, Math.min(1, num));
+    }
+
+    function normalizeMappingRow(row, index) {
+      return {
+        record_id: String(row.record_id || `M${String(index + 1).padStart(4, "0")}`),
+        source_component_name: String(row.source_component_name || ""),
+        source_aliases: normalizeArray(row.source_aliases),
+        selected_standard_name: String(row.selected_standard_name || ""),
+        standard_aliases: normalizeArray(row.standard_aliases),
+        candidate_standard_names: normalizeArray(row.candidate_standard_names),
+        match_type: String(row.match_type || ""),
+        match_status: String(row.match_status || "unmatched"),
+        confidence: normalizeConfidence(row.confidence),
+        review_status: String(row.review_status || "pending"),
+        evidence_paths: normalizeArray(row.evidence_paths),
+        evidence_texts: normalizeArray(row.evidence_texts),
+        reasoning: String(row.reasoning || ""),
+        manual_notes: String(row.manual_notes || ""),
+        delete_row: Boolean(row.delete_row)
+      };
+    }
+
+    function normalizeSynonymRow(row, index) {
+      return {
+        record_id: String(row.record_id || `S${String(index + 1).padStart(4, "0")}`),
+        canonical_name: String(row.canonical_name || row.source_component_name || ""),
+        source_component_name: String(row.source_component_name || row.canonical_name || ""),
+        aliases: normalizeArray(row.aliases),
+        chapter_nodes: normalizeArray(row.chapter_nodes),
+        selected_standard_name: String(row.selected_standard_name || ""),
+        match_status: String(row.match_status || "unmatched"),
+        source_component_names: normalizeArray(row.source_component_names),
+        match_types: normalizeArray(row.match_types),
+        review_statuses: normalizeArray(row.review_statuses),
+        evidence_paths: normalizeArray(row.evidence_paths),
+        notes: normalizeArray(row.notes),
+        delete_row: Boolean(row.delete_row)
+      };
+    }
+
+    function hydratePackage(pkg) {
+      const target = pkg && typeof pkg === "object" ? pkg : emptyPackage();
+      target.meta = target.meta || {};
+      target.component_matching_result = target.component_matching_result || { meta: {}, mappings: [] };
+      target.synonym_library = target.synonym_library || { meta: {}, synonym_library: [], unmatched_components: [] };
+      target.source_run_summary = target.source_run_summary || {};
+      target.component_matching_result.meta = target.component_matching_result.meta || {};
+      target.synonym_library.meta = target.synonym_library.meta || {};
+      target.component_matching_result.mappings = (target.component_matching_result.mappings || []).map(normalizeMappingRow);
+      target.synonym_library.synonym_library = (target.synonym_library.synonym_library || []).map(normalizeSynonymRow);
+      target.synonym_library.unmatched_components = normalizeArray(target.synonym_library.unmatched_components);
+      return target;
+    }
+
+    function setState(nextState, resetBase = false) {
+      state = hydratePackage(deepClone(nextState));
+      if (resetBase) {
+        baseState = deepClone(state);
+      }
+      syncFilters();
+      render();
+    }
+
+    function setStatus(message, kind = "") {
+      const bar = document.getElementById("statusBar");
+      bar.textContent = message;
+      bar.className = `status-bar${kind ? " " + kind : ""}`;
+    }
+
+    function countStatuses(rows) {
+      const counters = { matched: 0, candidate_only: 0, conflict: 0, unmatched: 0 };
+      for (const row of rows) {
+        if (counters[row.match_status] !== undefined) counters[row.match_status] += 1;
+      }
+      return counters;
+    }
+
+    function buildChips() {
+      const meta = state.meta || {};
+      const componentMeta = state.component_matching_result.meta || {};
+      const summary = state.source_run_summary || {};
+      const chips = [
+        `标准文档：${componentMeta.standard_document || meta.standard_document || "未加载"}`,
+        `匹配记录：${state.component_matching_result.mappings.length}`,
+        `源构件词库：${state.synonym_library.synonym_library.length}`,
+        `已匹配源构件：${state.synonym_library.synonym_library.filter(row => row.selected_standard_name).length}`,
+        `页面版本：${meta.app_version || "APP_VERSION_PLACEHOLDER"}`
+      ];
+      if (summary.status) chips.push(`运行状态：${summary.status}`);
+      document.getElementById("heroMeta").innerHTML = chips.map(text => `<span class="chip">${escapeHtml(text)}</span>`).join("");
+    }
+
+    function buildCards() {
+      const mappingRows = state.component_matching_result.mappings.filter(row => !row.delete_row);
+      const counts = countStatuses(mappingRows);
+      const cards = [
+        ["已匹配", counts.matched],
+        ["候选待定", counts.candidate_only],
+        ["冲突待核", counts.conflict],
+        ["未匹配", counts.unmatched],
+        ["当前标准文档", state.component_matching_result.meta.standard_document || state.meta.standard_document || "未加载"]
+      ];
+      document.getElementById("summaryCards").innerHTML = cards
+        .map(([label, value]) => `<div class="card"><div class="label">${escapeHtml(label)}</div><div class="value">${escapeHtml(value)}</div></div>`)
+        .join("");
+    }
+
+    function refillSelect(selectEl, values, placeholder) {
+      const current = selectEl.value;
+      selectEl.innerHTML = "";
+      const emptyOpt = document.createElement("option");
+      emptyOpt.value = "";
+      emptyOpt.textContent = placeholder;
+      selectEl.appendChild(emptyOpt);
+      for (const value of values) {
+        const opt = document.createElement("option");
+        opt.value = value;
+        opt.textContent = labelOf(value);
+        selectEl.appendChild(opt);
+      }
+      if ([...selectEl.options].some(opt => opt.value === current)) {
+        selectEl.value = current;
+      }
+    }
+
+    function syncFilters() {
+      refillSelect(
+        document.getElementById("matchStatusFilter"),
+        dedupe(state.component_matching_result.mappings.map(row => row.match_status)),
+        "全部匹配状态"
+      );
+      refillSelect(
+        document.getElementById("reviewStatusFilter"),
+        dedupe(state.component_matching_result.mappings.map(row => row.review_status)),
+        "全部复核状态"
+      );
+    }
+
+    function getActiveRows() {
+      return activeTab === "mappings"
+        ? state.component_matching_result.mappings
+        : state.synonym_library.synonym_library;
+    }
+
+    function getColumns() {
+      return activeTab === "mappings" ? mappingColumns : synonymColumns;
+    }
+
+    function rowVisible(row, search, visibility) {
+      if (visibility === "active" && row.delete_row) return false;
+      if (visibility === "deleted" && !row.delete_row) return false;
+      if (visibility !== "all" && visibility !== "deleted" && row.delete_row) return false;
+
+      if (activeTab === "mappings") {
+        const matchStatus = document.getElementById("matchStatusFilter").value;
+        const reviewStatus = document.getElementById("reviewStatusFilter").value;
+        if (matchStatus && row.match_status !== matchStatus) return false;
+        if (reviewStatus && row.review_status !== reviewStatus) return false;
+      }
+
+      if (!search) return true;
+      return JSON.stringify(row).toLowerCase().includes(search);
+    }
+
+    function visibleIndices() {
+      const search = document.getElementById("searchInput").value.trim().toLowerCase();
+      const visibility = document.getElementById("rowVisibilityFilter").value;
+      return getActiveRows()
+        .map((row, index) => ({ row, index }))
+        .filter(item => rowVisible(item.row, search, visibility))
+        .map(item => item.index);
+    }
+
+    function badge(status) {
+      if (!status) return "";
+      return `<div class="badge ${escapeHtml(status)}">${escapeHtml(labelOf(status))}</div>`;
+    }
+
+    function renderCell(row, rowIndex, column) {
+      const field = column.key;
+      const value = row[field];
+      const cls = column.cls || "";
+
+      if (column.type === "readonly") {
+        return `<td class="${cls}">${escapeHtml(value)}</td>`;
+      }
+      if (column.type === "textarea") {
+        return `<td class="${cls}"><textarea data-tab="${activeTab}" data-index="${rowIndex}" data-field="${field}">${escapeHtml(arrayText(value))}</textarea></td>`;
+      }
+      if (column.type === "number") {
+        const display = value === "" ? "" : Number(value);
+        return `<td class="${cls}"><input type="number" min="0" max="1" step="0.01" data-tab="${activeTab}" data-index="${rowIndex}" data-field="${field}" value="${escapeHtml(display)}" /></td>`;
+      }
+      if (column.type === "checkbox") {
+        return `<td class="${cls}"><label><input type="checkbox" data-tab="${activeTab}" data-index="${rowIndex}" data-field="${field}" ${value ? "checked" : ""} /> 标记删除</label></td>`;
+      }
+      if (column.type === "select") {
+        return `<td class="${cls}">${field.includes("status") ? badge(value) : ""}<select data-tab="${activeTab}" data-index="${rowIndex}" data-field="${field}">
+          ${column.options.map(option => `<option value="${escapeHtml(option)}" ${String(value) === option ? "selected" : ""}>${escapeHtml(labelOf(option))}</option>`).join("")}
+        </select></td>`;
+      }
+      return `<td class="${cls}"><input type="text" data-tab="${activeTab}" data-index="${rowIndex}" data-field="${field}" value="${escapeHtml(value || "")}" /></td>`;
+    }
+
+    function renderTable() {
+      document.getElementById("tabMappings").classList.toggle("active", activeTab === "mappings");
+      document.getElementById("tabSynonyms").classList.toggle("active", activeTab === "synonyms");
+      document.getElementById("addRowBtn").textContent = activeTab === "mappings" ? "新增匹配行" : "新增源构件词库行";
+      document.getElementById("matchStatusFilter").disabled = activeTab !== "mappings";
+      document.getElementById("reviewStatusFilter").disabled = activeTab !== "mappings";
+
+      const columns = getColumns();
+      const rows = getActiveRows();
+      const indexes = visibleIndices();
+      document.getElementById("tableHead").innerHTML = `<tr><th class="index-col">序号</th>${columns.map(col => `<th class="${col.cls || ""}">${escapeHtml(col.label)}</th>`).join("")}</tr>`;
+
+      if (!indexes.length) {
+        document.getElementById("tableBody").innerHTML = "";
+        document.getElementById("emptyState").style.display = "block";
+      } else {
+        document.getElementById("emptyState").style.display = "none";
+        document.getElementById("tableBody").innerHTML = indexes.map((rowIndex, i) => `
+          <tr>
+            <td class="index-col">${i + 1}</td>
+            ${columns.map(col => renderCell(rows[rowIndex], rowIndex, col)).join("")}
+          </tr>
+        `).join("");
+      }
+
+      if (activeTab === "mappings") {
+        const validRows = state.component_matching_result.mappings.filter(row => !row.delete_row);
+        const counts = countStatuses(validRows);
+        document.getElementById("inlineStats").innerHTML = [
+          `<span><strong>${validRows.length}</strong> 条有效匹配记录</span>`,
+          `<span>${badge("matched")} ${counts.matched}</span>`,
+          `<span>${badge("candidate_only")} ${counts.candidate_only}</span>`,
+          `<span>${badge("conflict")} ${counts.conflict}</span>`,
+          `<span>${badge("unmatched")} ${counts.unmatched}</span>`
+        ].join("");
+      } else {
+        const validRows = state.synonym_library.synonym_library.filter(row => !row.delete_row);
+        document.getElementById("inlineStats").innerHTML = [
+          `<span><strong>${validRows.length}</strong> 条源构件词库记录</span>`,
+          `<span><strong>${validRows.filter(row => row.selected_standard_name).length}</strong> 条已匹配源构件</span>`
+        ].join("");
+      }
+    }
+
+    function render() {
+      buildChips();
+      buildCards();
+      renderTable();
+    }
+
+    function updateField(tab, index, field, rawValue, inputType) {
+      const rows = tab === "mappings"
+        ? state.component_matching_result.mappings
+        : state.synonym_library.synonym_library;
+      const row = rows[index];
+      if (!row) return;
+      if (inputType === "checkbox") {
+        row[field] = Boolean(rawValue);
+      } else if (field === "confidence") {
+        row[field] = normalizeConfidence(rawValue);
+      } else if ((tab === "mappings" && ARRAY_FIELDS.mappings.includes(field)) || (tab === "synonyms" && ARRAY_FIELDS.synonyms.includes(field))) {
+        row[field] = normalizeArray(rawValue);
+      } else {
+        row[field] = String(rawValue || "");
+      }
+      render();
+    }
+
+    function deriveSynonymLibraryFromMappings(mappings) {
+      const grouped = new Map();
+      for (const row of mappings) {
+        const sourceName = String(row.source_component_name || "").trim();
+        if (!sourceName) continue;
+        if (!grouped.has(sourceName)) {
+          grouped.set(sourceName, {
+            canonical_name: sourceName,
+            source_component_name: sourceName,
+            aliases: [],
+            chapter_nodes: [],
+            selected_standard_name: "",
+            match_status: "unmatched",
+            source_component_names: [],
+            match_types: [],
+            review_statuses: [],
+            evidence_paths: [],
+            notes: []
+          });
+        }
+        const entry = grouped.get(sourceName);
+        const selectedStandardName = String(row.selected_standard_name || "").trim();
+        if (selectedStandardName && !entry.selected_standard_name) {
+          entry.selected_standard_name = selectedStandardName;
+        }
+        entry.match_status = String(row.match_status || entry.match_status || "unmatched");
+        entry.aliases = dedupe([...entry.aliases, ...normalizeArray(row.standard_aliases), ...normalizeArray(row.source_aliases).filter(item => item !== sourceName)]);
+        entry.chapter_nodes = dedupe([
+          ...entry.chapter_nodes,
+          ...normalizeArray(row.candidate_standard_names),
+          ...normalizeArray(row.evidence_texts).filter(item => item.includes("附录") || item.includes(">") || /^[A-Z]\\.\\d+/i.test(item))
+        ]);
+        entry.source_component_names = dedupe([...entry.source_component_names, sourceName]);
+        entry.match_types = dedupe([...entry.match_types, String(row.match_type || "").trim()]);
+        entry.review_statuses = dedupe([...entry.review_statuses, String(row.review_status || "").trim()]);
+      }
+      return {
+        meta: {
+          task_name: "component_standard_name_synonym_library",
+          standard_document: state.component_matching_result.meta.standard_document || state.meta.standard_document || "",
+          generated_at: new Date().toISOString(),
+          source_review_stage: "manual_review_html",
+          library_mode: "source_component_first",
+          component_count: grouped.size,
+          matched_component_count: [...grouped.values()].filter(row => row.selected_standard_name).length,
+          matched_canonical_count: grouped.size,
+          unmatched_component_count: 0
+        },
+        synonym_library: [...grouped.values()].map((row, index) => normalizeSynonymRow(row, index)).sort((a, b) => a.source_component_name.localeCompare(b.source_component_name, "zh-CN")),
+        unmatched_components: []
+      };
+    }
+
+    function buildReviewPackage() {
+      const reviewedMappings = state.component_matching_result.mappings.filter(row => !row.delete_row).map((row, index) => {
+        const normalized = normalizeMappingRow(row, index);
+        delete normalized.delete_row;
+        return normalized;
+      });
+      const reviewedSynonyms = state.synonym_library.synonym_library.filter(row => !row.delete_row).map((row, index) => {
+        const normalized = normalizeSynonymRow(row, index);
+        delete normalized.delete_row;
+        return normalized;
+      });
+      const counts = countStatuses(reviewedMappings);
+      return {
+        meta: {
+          ...(state.meta || {}),
+          task_name: "step2_manual_review_package",
+          generated_at: new Date().toISOString(),
+          app_version: "APP_VERSION_PLACEHOLDER"
+        },
+        component_matching_result: {
+          meta: {
+            ...(state.component_matching_result.meta || {}),
+            generated_at: new Date().toISOString(),
+            review_stage: "manual_review_html",
+            mapping_count: reviewedMappings.length,
+            matched_count: counts.matched,
+            candidate_only_count: counts.candidate_only,
+            conflict_count: counts.conflict,
+            unmatched_count: counts.unmatched
+          },
+          mappings: reviewedMappings
+        },
+        synonym_library: {
+          meta: {
+            ...(state.synonym_library.meta || {}),
+            generated_at: new Date().toISOString(),
+            source_review_stage: "manual_review_html",
+            library_mode: "source_component_first",
+            component_count: reviewedSynonyms.length,
+            matched_component_count: reviewedSynonyms.filter(row => row.selected_standard_name).length,
+            matched_canonical_count: reviewedSynonyms.length,
+            unmatched_component_count: Math.max(
+              reviewedSynonyms.filter(row => row.match_status === "unmatched").length,
+              normalizeArray(state.synonym_library.unmatched_components).length
+            )
+          },
+          synonym_library: reviewedSynonyms,
+          unmatched_components: normalizeArray(state.synonym_library.unmatched_components)
+        },
+        source_run_summary: state.source_run_summary || {}
+      };
+    }
+
+    function buildFinalArtifacts() {
+      const reviewPackage = buildReviewPackage();
+      const mappings = reviewPackage.component_matching_result.mappings;
+      let synonymLibrary = reviewPackage.synonym_library;
+      if (!synonymLibrary.synonym_library.length) {
+        synonymLibrary = deriveSynonymLibraryFromMappings(mappings);
+      }
+      const counts = countStatuses(mappings);
+      const runSummary = {
+        task_name: "step2_manual_review_html_export",
+        generated_at: new Date().toISOString(),
+        status: "manual_review_completed",
+        standard_document: reviewPackage.component_matching_result.meta.standard_document || reviewPackage.meta.standard_document || "",
+        mapping_count: mappings.length,
+        matched_count: counts.matched,
+        candidate_only_count: counts.candidate_only,
+        conflict_count: counts.conflict,
+        unmatched_count: counts.unmatched,
+        synonym_component_count: synonymLibrary.synonym_library.length,
+        matched_synonym_component_count: synonymLibrary.synonym_library.filter(row => row.selected_standard_name).length,
+        synonym_canonical_count: synonymLibrary.synonym_library.length,
+        unmatched_component_count: Math.max(
+          synonymLibrary.synonym_library.filter(row => row.match_status === "unmatched").length,
+          synonymLibrary.unmatched_components.length
+        )
+      };
+      return {
+        reviewPackage,
+        componentMatchingResult: reviewPackage.component_matching_result,
+        synonymLibrary,
+        runSummary
+      };
+    }
+
+    async function saveJson(payload, suggestedName) {
+      const text = JSON.stringify(payload, null, 2);
+      if (window.showSaveFilePicker) {
+        const handle = await window.showSaveFilePicker({
+          suggestedName,
+          types: [{ description: "JSON 文件", accept: { "application/json": [".json"] } }]
+        });
+        const writable = await handle.createWritable();
+        await writable.write(text);
+        await writable.close();
+        setStatus(`已保存：${suggestedName}`, "ok");
+        return;
+      }
+      const blob = new Blob([text], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = suggestedName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setStatus(`浏览器不支持系统保存对话框，已改为普通下载：${suggestedName}`, "warn");
+    }
+
+    async function readJsonFile(inputId) {
+      const file = document.getElementById(inputId).files && document.getElementById(inputId).files[0];
+      if (!file) return null;
+      const text = await file.text();
+      return { name: file.name, payload: JSON.parse(text) };
+    }
+
+    async function loadStep2Files() {
+      try {
+        const component = await readJsonFile("componentInput");
+        if (!component) {
+          setStatus("请先选择“匹配总结果 JSON”。", "error");
+          return;
+        }
+        const synonym = await readJsonFile("synonymInput");
+        const summary = await readJsonFile("summaryInput");
+        const pkg = emptyPackage();
+        pkg.meta.standard_document = component.payload?.meta?.standard_document || "";
+        pkg.meta.source_component_result_path = component.name;
+        pkg.meta.source_synonym_library_path = synonym ? synonym.name : "";
+        pkg.meta.source_run_summary_path = summary ? summary.name : "";
+        pkg.component_matching_result = component.payload;
+        pkg.synonym_library = synonym ? synonym.payload : deriveSynonymLibraryFromMappings((component.payload?.mappings || []).map(normalizeMappingRow));
+        pkg.source_run_summary = summary ? summary.payload : {};
+        setState(pkg, true);
+        setStatus(`已加载第二步结果文件：${component.name}${synonym ? `，${synonym.name}` : ""}`, "ok");
+      } catch (error) {
+        setStatus(`加载文件失败：${error.message || error}`, "error");
+      }
+    }
+
+    async function loadReviewPackage() {
+      try {
+        const reviewPackage = await readJsonFile("packageInput");
+        if (!reviewPackage) {
+          setStatus("请先选择“已修订包 JSON”。", "error");
+          return;
+        }
+        setState(reviewPackage.payload, true);
+        setStatus(`已加载修订包：${reviewPackage.name}`, "ok");
+      } catch (error) {
+        setStatus(`加载修订包失败：${error.message || error}`, "error");
+      }
+    }
+
+    function resetTool() {
+      activeTab = "mappings";
+      document.getElementById("searchInput").value = "";
+      document.getElementById("matchStatusFilter").value = "";
+      document.getElementById("reviewStatusFilter").value = "";
+      document.getElementById("rowVisibilityFilter").value = "active";
+      setState(emptyPackage(), true);
+      setStatus("已恢复为空白工具。", "ok");
+    }
+
+    function addCurrentRow() {
+      if (activeTab === "mappings") {
+        state.component_matching_result.mappings.push(normalizeMappingRow({}, state.component_matching_result.mappings.length));
+      } else {
+        state.synonym_library.synonym_library.push(normalizeSynonymRow({}, state.synonym_library.synonym_library.length));
+      }
+      render();
+    }
+
+    function rebuildSynonyms() {
+      const derived = deriveSynonymLibraryFromMappings(state.component_matching_result.mappings.filter(row => !row.delete_row));
+      state.synonym_library = derived;
+      activeTab = "synonyms";
+      render();
+      setStatus("已按当前匹配总结果重建源构件词库。", "ok");
+    }
+
+    document.getElementById("tableBody").addEventListener("input", event => {
+      const target = event.target;
+      if (!target.dataset || !target.dataset.field) return;
+      updateField(target.dataset.tab, Number(target.dataset.index), target.dataset.field, target.value, target.type);
+    });
+    document.getElementById("tableBody").addEventListener("change", event => {
+      const target = event.target;
+      if (!target.dataset || !target.dataset.field) return;
+      updateField(target.dataset.tab, Number(target.dataset.index), target.dataset.field, target.type === "checkbox" ? target.checked : target.value, target.type);
+    });
+    document.getElementById("searchInput").addEventListener("input", render);
+    document.getElementById("matchStatusFilter").addEventListener("change", render);
+    document.getElementById("reviewStatusFilter").addEventListener("change", render);
+    document.getElementById("rowVisibilityFilter").addEventListener("change", render);
+    document.getElementById("tabMappings").addEventListener("click", () => { activeTab = "mappings"; render(); });
+    document.getElementById("tabSynonyms").addEventListener("click", () => { activeTab = "synonyms"; render(); });
+    document.getElementById("loadStep2Btn").addEventListener("click", loadStep2Files);
+    document.getElementById("loadPackageBtn").addEventListener("click", loadReviewPackage);
+    document.getElementById("resetBtn").addEventListener("click", resetTool);
+    document.getElementById("addRowBtn").addEventListener("click", addCurrentRow);
+    document.getElementById("rebuildSynonymsBtn").addEventListener("click", rebuildSynonyms);
+    document.getElementById("savePackageBtn").addEventListener("click", async () => {
+      const { reviewPackage } = buildFinalArtifacts();
+      await saveJson(reviewPackage, "step2_manual_review_package.json");
+    });
+    document.getElementById("saveMatchingBtn").addEventListener("click", async () => {
+      const { componentMatchingResult } = buildFinalArtifacts();
+      await saveJson(componentMatchingResult, "component_matching_result.json");
+    });
+    document.getElementById("saveSynonymBtn").addEventListener("click", async () => {
+      const { synonymLibrary } = buildFinalArtifacts();
+      await saveJson(synonymLibrary, "synonym_library.json");
+    });
+    document.getElementById("saveSummaryBtn").addEventListener("click", async () => {
+      const { runSummary } = buildFinalArtifacts();
+      await saveJson(runSummary, "run_summary.json");
+    });
+
+    setState(initialState, true);
+    if (!state.component_matching_result.mappings.length) {
+      setStatus("工具已就绪。请先选择“匹配总结果 JSON”，然后点击“加载第二步结果文件”。");
+    }
+  </script>
+</body>
+</html>
+"""
+
+TOOL_README_TEXT = """第二步结果人工修订工具
+
+这个文件夹可以直接发给产品经理使用。
+
+使用方法：
+1. 双击“打开人工修订工具.bat”。
+2. 浏览器打开后，先选择：
+   - 匹配总结果 JSON：必选，通常是 component_matching_result.json
+   - 源构件词库 JSON：可选，通常是 synonym_library.json
+   - 运行摘要 JSON：可选，通常是 run_summary.json
+3. 点击“加载第二步结果文件”。
+4. 在页面里修改匹配总结果或源构件词库。
+5. 导出时点击：
+   - “导出修订包 JSON”：推荐，适合回传给开发侧回写
+   - “导出最终匹配结果 JSON”
+   - “导出最终源构件词库 JSON”
+   - “导出最终摘要 JSON”
+
+说明：
+- 如果文件夹里已经带了“待修订输入”目录，产品可以直接从里面选择 JSON 文件。
+- 如果使用的是 Edge 或 Chrome，导出时会弹出系统保存窗口，产品可以自己选择保存路径。
+- 如果浏览器不支持系统保存窗口，工具会自动改成普通下载。
+- 这个工具不依赖 Python，不需要安装任何环境。
+- 如果产品第二次继续改，可以直接用“已修订包 JSON”重新加载。
+"""
+
+TOOL_BAT_TEXT = """@echo off
+setlocal
+set TOOL_HTML=%~dp0第二步结果人工修订工具.html
+start "" "%TOOL_HTML%"
+"""
+
+
+def _write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def build_empty_review_package() -> Dict[str, Any]:
+    return {
+        "meta": {
+            "task_name": "step2_manual_review_package",
+            "generated_at": "",
+            "app_version": APP_VERSION,
+            "standard_document": "",
+            "source_step2_dir": "",
+            "source_component_result_path": "",
+            "source_synonym_library_path": "",
+            "source_run_summary_path": "",
+        },
+        "component_matching_result": {
+            "meta": {
+                "task_name": "component_standard_name_matching",
+                "standard_document": "",
+                "generated_at": "",
+                "review_stage": "manual_review_html",
+            },
+            "mappings": [],
+        },
+        "synonym_library": {
+            "meta": {
+                "task_name": "component_standard_name_synonym_library",
+                "standard_document": "",
+                "generated_at": "",
+                "source_review_stage": "manual_review_html",
+            },
+            "synonym_library": [],
+            "unmatched_components": [],
+        },
+        "source_run_summary": {},
+    }
+
+
+def _copy_step2_inputs(step2_output_dir: Path, bundle_dir: Path) -> Dict[str, str]:
+    source_dir = step2_output_dir.expanduser().resolve()
+    input_dir = bundle_dir / DELIVERY_INPUT_DIR_NAME
+    input_dir.mkdir(parents=True, exist_ok=True)
+
+    copied: Dict[str, str] = {}
+    for file_name in ("component_matching_result.json", "synonym_library.json", "run_summary.json"):
+        source_path = source_dir / file_name
+        if not source_path.exists():
+            continue
+        target_path = input_dir / file_name
+        shutil.copy2(source_path, target_path)
+        copied[file_name] = str(target_path)
+    return copied
+
+
+def build_step2_review_tool_bundle(output_dir: str | Path, step2_output_dir: str | Path | None = None) -> Dict[str, Any]:
+    target_dir = Path(output_dir).expanduser().resolve()
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    html_path = target_dir / TOOL_HTML_NAME
+    bat_path = target_dir / TOOL_BAT_NAME
+    readme_path = target_dir / TOOL_README_NAME
+
+    html_text = TOOL_HTML_TEMPLATE.replace(
+        "__INITIAL_STATE__",
+        json.dumps(build_empty_review_package(), ensure_ascii=False).replace("</", "<\\/"),
+    ).replace("APP_VERSION_PLACEHOLDER", APP_VERSION)
+
+    _write_text(html_path, html_text)
+    _write_text(bat_path, TOOL_BAT_TEXT)
+    _write_text(readme_path, TOOL_README_TEXT)
+
+    copied_inputs: Dict[str, str] = {}
+    if step2_output_dir:
+        copied_inputs = _copy_step2_inputs(Path(step2_output_dir), target_dir)
+
+    return {
+        "output_dir": str(target_dir),
+        "html_path": str(html_path),
+        "bat_path": str(bat_path),
+        "readme_path": str(readme_path),
+        "copied_inputs": copied_inputs,
+    }

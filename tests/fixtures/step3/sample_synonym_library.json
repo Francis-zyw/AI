@@ -1,0 +1,51 @@
+{
+  "meta": {
+    "task_name": "component_standard_name_synonym_library",
+    "standard_document": "sample",
+    "generated_at": "2026-03-20T12:00:00+08:00"
+  },
+  "synonym_library": [
+    {
+      "canonical_name": "地下室外墙",
+      "aliases": [
+        "地下室外墙",
+        "混凝土外墙"
+      ],
+      "source_component_names": [
+        "砼墙"
+      ]
+    },
+    {
+      "canonical_name": "钢筋混凝土墙",
+      "aliases": [
+        "钢筋混凝土墙",
+        "直行墙",
+        "直形墙",
+        "混凝土墙"
+      ],
+      "source_component_names": [
+        "砼墙"
+      ]
+    },
+    {
+      "canonical_name": "混凝土梁",
+      "aliases": [
+        "混凝土梁",
+        "梁"
+      ],
+      "source_component_names": [
+        "梁"
+      ]
+    },
+    {
+      "canonical_name": "墙面模板",
+      "aliases": [
+        "墙面模板"
+      ],
+      "source_component_names": [
+        "砼墙"
+      ]
+    }
+  ],
+  "unmatched_components": []
+}

@@ -1,0 +1,16 @@
+[
+  {
+    "row_id": "S4SAMPLE-001",
+    "project_code": "010502010",
+    "project_name": "钢筋混凝土墙",
+    "project_features": "1.混凝土种类、强度等级\n2.墙厚 200mm\n3.支模高度 3.6m",
+    "measurement_unit": "m3"
+  },
+  {
+    "row_id": "S4SAMPLE-002",
+    "project_code": "010502011",
+    "project_name": "地下室外墙",
+    "project_features": "1.混凝土种类、强度等级\n2.墙厚 300mm\n3.抗渗要求 P6",
+    "measurement_unit": "m3"
+  }
+]

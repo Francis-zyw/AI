@@ -1,0 +1,37 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+venv/
+.venv/
+*.egg
+
+# Runtime secrets — never commit
+.env
+*.key
+
+# IDE
+.vscode/
+.idea/
+
+# Build artifacts
+data/output/
+data/cache/
+data/temp/
+data/logs/
+data/manual_reviews/
+data/published/
+data/workspaces_v2/
+
+# Large binary files — keep in local only
+data/input/*.pdf
+data/input/component_type_attribute_excels/
+*.xls
+*.xlsx
+
+# Legacy archived tools (1GB+)
+分析工具/

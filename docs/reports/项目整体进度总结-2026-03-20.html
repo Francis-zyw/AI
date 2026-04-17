@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>项目进展汇报</title>
+  <style>
+    body {
+      font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.8;
+      margin: 36px;
+      color: #222;
+    }
+    h1, h2 {
+      color: #123b63;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0 24px;
+      font-size: 13px;
+    }
+    th, td {
+      border: 1px solid #9aa7b3;
+      padding: 8px 10px;
+      vertical-align: top;
+    }
+    th {
+      background: #edf4fb;
+      text-align: left;
+    }
+    .note {
+      background: #f7f9fc;
+      border-left: 4px solid #4f86c6;
+      padding: 10px 12px;
+      margin: 12px 0 20px;
+    }
+  </style>
+</head>
+<body>
+  <h1>国标解析项目进展汇报</h1>
+  <p>时间：2026年3月20日</p>
+
+  <div class="note">
+    <strong>当前情况：</strong>项目主流程已经跑通，已经具备从国标内容整理到清单初步匹配的基础能力。现在的重点是把结果继续做稳、做准，并完成最后的业务收口。
+  </div>
+
+  <h2>一、项目目标</h2>
+  <p>项目目标是实现导入清单后，系统自动关联国标项目、软件构件、计算项目和筛选条件，最终形成可直接用于自动匹配的结果。</p>
+
+  <h2>二、当前进展</h2>
+  <ul>
+    <li>Step1 已完成，已经能把国标文档拆成后续可直接使用的数据。</li>
+    <li>Step2 已完成主要开发，前期因上下文过长导致模型不稳定，后续已经增加拆分批处理和后处理，整体稳定性已有改善。</li>
+    <li>Step3 已经跑通，已经能生成清单与构件、计算项目的初步匹配结果。</li>
+    <li>配套工具已经具备，包括构件库维护工具和人工修订工具。</li>
+    <li>基础测试已经通过，核心模块可运行。</li>
+  </ul>
+
+  <h2>三、当前问题</h2>
+  <table>
+    <tr>
+      <th>问题</th>
+      <th>当前状态</th>
+    </tr>
+    <tr>
+      <td>Step2 正式结果还不够稳定</td>
+      <td>拆分方案已经补上，下一步要基于新方案稳定跑出正式结果。</td>
+    </tr>
+    <tr>
+      <td>主流程还没有完全闭环</td>
+      <td>目前已经做到初步匹配，但离导入清单后直接输出最终结果还差最后一段整合。</td>
+    </tr>
+    <tr>
+      <td>结果还需要继续优化</td>
+      <td>当前结果可以继续往下用，但还需要继续提升准确率和稳定性。</td>
+    </tr>
+    <tr>
+      <td>原始数据还需要清理</td>
+      <td>个别名称、单位和字段还有噪声，需要继续处理。</td>
+    </tr>
+  </table>
+
+  <h2>四、下一步</h2>
+  <ol>
+    <li>基于拆分方案，稳定跑出 Step2 正式结果。</li>
+    <li>把 Step2 结果稳定接入 Step3。</li>
+    <li>继续优化结果质量，减少误匹配。</li>
+    <li>补齐最后一段流程，形成可直接使用的最终输出。</li>
+  </ol>
+
+  <h2>五、结论</h2>
+  <p>项目已经完成主流程搭建，当前已经进入结果优化和最终收口阶段。整体进度是向前推进的，后续重点是把正式结果跑稳，并完成最终输出。</p>
+</body>
+</html>

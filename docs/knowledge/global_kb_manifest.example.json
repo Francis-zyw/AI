@@ -1,0 +1,32 @@
+{
+  "default_collection": "general",
+  "sources": [
+    {
+      "path": "/Users/zhangkaiye/Notes",
+      "collection": "personal_notes",
+      "source_type": "markdown",
+      "tags": ["personal", "notes"],
+      "recursive": true,
+      "include_globs": ["**/*.md"],
+      "exclude_globs": ["**/.git/**", "**/node_modules/**"]
+    },
+    {
+      "path": "/Users/zhangkaiye/AI数据/AI智能提量/智能提量处理流程/智能提量工具/docs",
+      "collection": "engineering_docs",
+      "source_type": "documentation",
+      "tags": ["engineering", "docs"],
+      "recursive": true,
+      "include_globs": ["**/*.md", "**/*.json"],
+      "exclude_globs": ["**/__pycache__/**", "**/.pytest_cache/**"]
+    },
+    {
+      "path": "/Users/zhangkaiye/AI数据/AI智能提量/智能提量处理流程/智能提量工具/data/output/step3",
+      "collection": "building_costing",
+      "source_type": "project_results",
+      "tags": ["costing", "step3"],
+      "recursive": true,
+      "include_globs": ["**/*.json"],
+      "exclude_globs": []
+    }
+  ]
+}

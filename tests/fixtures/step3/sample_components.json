@@ -1,0 +1,107 @@
+[
+  {
+    "component_type": "砼墙",
+    "properties": {
+      "attributes": [
+        {
+          "name": "混凝土种类",
+          "code": "TLX",
+          "data_type": "text",
+          "values": [
+            "商品砼"
+          ],
+          "source_sheet": "项目特征"
+        },
+        {
+          "name": "混凝土强度等级",
+          "code": "TBH",
+          "data_type": "text",
+          "values": [
+            "C30"
+          ],
+          "source_sheet": "项目特征"
+        },
+        {
+          "name": "墙厚",
+          "code": "HD",
+          "data_type": "number",
+          "values": [],
+          "source_sheet": "项目特征"
+        },
+        {
+          "name": "模板形式",
+          "code": "MBLX",
+          "data_type": "text",
+          "values": [
+            "木模板"
+          ],
+          "source_sheet": "项目特征"
+        }
+      ],
+      "calculations": [
+        {
+          "name": "体积",
+          "code": "TJ",
+          "expression": "",
+          "unit": "m3",
+          "source_sheet": "计算项目"
+        },
+        {
+          "name": "模板面积",
+          "code": "MBMJ",
+          "expression": "",
+          "unit": "m2",
+          "source_sheet": "计算项目"
+        }
+      ]
+    }
+  },
+  {
+    "component_type": "梁",
+    "properties": {
+      "attributes": [
+        {
+          "name": "混凝土种类",
+          "code": "TLX",
+          "data_type": "text",
+          "values": [
+            "商品砼"
+          ],
+          "source_sheet": "项目特征"
+        },
+        {
+          "name": "混凝土强度等级",
+          "code": "TBH",
+          "data_type": "text",
+          "values": [
+            "C30"
+          ],
+          "source_sheet": "项目特征"
+        },
+        {
+          "name": "坡度",
+          "code": "PD",
+          "data_type": "number",
+          "values": [],
+          "source_sheet": "项目特征"
+        }
+      ],
+      "calculations": [
+        {
+          "name": "体积",
+          "code": "TJ",
+          "expression": "",
+          "unit": "m3",
+          "source_sheet": "计算项目"
+        },
+        {
+          "name": "模板面积",
+          "code": "MBMJ",
+          "expression": "",
+          "unit": "m2",
+          "source_sheet": "计算项目"
+        }
+      ]
+    }
+  }
+]

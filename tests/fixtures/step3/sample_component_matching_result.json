@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "task_name": "component_matching_result",
+    "standard_document": "sample"
+  },
+  "rows": [
+    {
+      "project_code": "010502010",
+      "project_name": "钢筋混凝土墙",
+      "component_candidates": [
+        "砼墙"
+      ]
+    }
+  ]
+}
